@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0] - 2026-02-08
+
+### Fixed
+- Bar 1 keybinds now correctly use flight abilities when mounted (dragonriding/skyriding)
+- Bar 1 keybinds now correctly use vehicle, override, possess, and shapeshift bar abilities
+- Fixed buttons not working after dismounting due to API state race condition
+
+### Added
+- Comprehensive bar paging detection (vehicle, override, possess, shapeshift, bonus bar, page changes)
+- Delayed recheck timer to handle event/API timing mismatches on dismount
+- Registered for all bar state change events (vehicle, bonus bar, shapeshift, page changes)
+
 ## [1.0.0] - 2025-02-08
 
 ### Added

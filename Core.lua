@@ -8,9 +8,6 @@ local bindingFrame = CreateFrame("Frame", "HoldToCastFixBindingOwner", UIParent)
 HoldToCastFix.bindingFrame = bindingFrame
 
 -- Mapping: ElvUI bar number -> keybind target prefix (matches ElvUI barDefaults.bindButtons)
--- These are the binding command names that the WoW engine uses natively.
--- When a key is bound to e.g. "ACTIONBUTTON2", the engine calls TryUseActionButton()
--- on ActionButton2, which enables the press-and-hold re-trigger loop.
 local barToBindTarget = {
     [1]  = "ACTIONBUTTON",
     [3]  = "MULTIACTIONBAR3BUTTON",
@@ -44,15 +41,22 @@ local defaults = {
 }
 
 HoldToCastFix.pendingUpdate = false
+HoldToCastFix.barPaged = false
+HoldToCastFix.recheckTimer = nil
 
-function HoldToCastFix:ApplyBindings()
-    if InCombatLockdown() then
-        self.pendingUpdate = true
-        return
-    end
+-- Check if bar1 is paged away from its default page.
+local function IsBarPaged(barNum)
+    if barNum ~= 1 then return false end
 
-    ClearOverrideBindings(bindingFrame)
+    return HasVehicleActionBar()
+        or HasOverrideActionBar()
+        or (IsPossessBarVisible and IsPossessBarVisible())
+        or HasTempShapeshiftActionBar()
+        or HasBonusActionBar()
+        or (GetActionBarPage and GetActionBarPage() ~= 1)
+end
 
+function HoldToCastFix:SetBindings()
     local db = HoldToCastFixDB
     if not db or not db.enabled then return end
 
@@ -62,20 +66,6 @@ function HoldToCastFix:ApplyBindings()
     local bindPrefix = barToBindTarget[barNum]
     if not bindPrefix then return end
 
-    -- For each button on this bar, set a high-priority override binding
-    -- that binds the key directly to the native action command (e.g. ACTIONBUTTON2).
-    --
-    -- KEY DIFFERENCE from previous approach:
-    -- SetOverrideBindingClick routes to a button's OnClick (synthetic click) which
-    -- does NOT trigger the engine's TryUseActionButton / press-and-hold system.
-    --
-    -- SetOverrideBinding routes the key to the native binding command, which the
-    -- engine handles exactly like a default keybind - including TryUseActionButton
-    -- and the press-and-hold re-trigger loop.
-    --
-    -- ElvUI uses SetOverrideBindingClick(bar, false, key, labButtonName) to redirect
-    -- keybinds to LAB buttons. Our SetOverrideBinding with priority=true takes
-    -- precedence, effectively restoring native binding behavior for this bar.
     for i = 1, 12 do
         local bindCommand = bindPrefix .. i
         local keys = {GetBindingKey(bindCommand)}
@@ -87,8 +77,60 @@ function HoldToCastFix:ApplyBindings()
     end
 end
 
+function HoldToCastFix:UpdateState()
+    if InCombatLockdown() then
+        self.pendingUpdate = true
+        return
+    end
+
+    local db = HoldToCastFixDB
+    if not db or not db.enabled then
+        ClearOverrideBindings(bindingFrame)
+        self.barPaged = false
+        return
+    end
+
+    local isPaged = IsBarPaged(db.bar)
+
+    if isPaged then
+        -- Bar is paged: clear our bindings, let ElvUI/Blizzard handle it
+        ClearOverrideBindings(bindingFrame)
+        self.barPaged = true
+    else
+        -- Bar is on default page: apply our native bindings for hold-to-cast
+        ClearOverrideBindings(bindingFrame)
+        self:SetBindings()
+        self.barPaged = false
+    end
+end
+
+-- Alias for the ElvUI hook
+function HoldToCastFix:ApplyBindings()
+    self:UpdateState()
+end
+
+-- Schedule a delayed recheck. When dismounting, multiple events fire but
+-- the API state (HasBonusActionBar, GetActionBarPage, etc.) may not update
+-- immediately. A short delay ensures we catch the final settled state.
+function HoldToCastFix:ScheduleRecheck()
+    if self.recheckTimer then
+        self.recheckTimer:Cancel()
+    end
+    self.recheckTimer = C_Timer.NewTimer(0.2, function()
+        self.recheckTimer = nil
+        self:UpdateState()
+    end)
+end
+
+-- Called on any bar state change event
+function HoldToCastFix:OnBarStateChanged()
+    -- Immediate check (handles transitions where the API is already updated)
+    self:UpdateState()
+    -- Delayed recheck (handles transitions where the API lags behind the event)
+    self:ScheduleRecheck()
+end
+
 function HoldToCastFix:Initialize()
-    -- Set up saved variables with defaults
     if not HoldToCastFixDB then
         HoldToCastFixDB = {}
     end
@@ -105,17 +147,32 @@ function HoldToCastFix:Initialize()
             local AB = E:GetModule("ActionBars", true)
             if AB and AB.HandleBinds then
                 hooksecurefunc(AB, "HandleBinds", function()
-                    HoldToCastFix:ApplyBindings()
+                    HoldToCastFix:UpdateState()
                 end)
             end
         end
     end
 
-    -- Apply bindings now
-    self:ApplyBindings()
+    self:UpdateState()
 
-    -- Register for combat end to apply deferred updates
+    -- Combat end: apply deferred updates
     self:RegisterEvent("PLAYER_REGEN_ENABLED")
+
+    -- Bar paging events: vehicle, override, possess
+    self:RegisterEvent("UPDATE_OVERRIDE_ACTIONBAR")
+    self:RegisterEvent("UPDATE_POSSESS_BAR")
+    self:RegisterEvent("VEHICLE_UPDATE")
+    self:RegisterEvent("UPDATE_VEHICLE_ACTIONBAR")
+    self:RegisterUnitEvent("UNIT_ENTERED_VEHICLE", "player")
+    self:RegisterUnitEvent("UNIT_EXITED_VEHICLE", "player")
+
+    -- Bonus bar (dragonriding/skyriding) and bar page changes
+    self:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
+    self:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
+
+    -- Shapeshift forms
+    self:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+    self:RegisterEvent("UPDATE_SHAPESHIFT_FORMS")
 end
 
 HoldToCastFix:RegisterEvent("PLAYER_LOGIN")
@@ -126,8 +183,10 @@ HoldToCastFix:SetScript("OnEvent", function(self, event)
     elseif event == "PLAYER_REGEN_ENABLED" then
         if self.pendingUpdate then
             self.pendingUpdate = false
-            self:ApplyBindings()
+            self:UpdateState()
         end
+    else
+        self:OnBarStateChanged()
     end
 end)
 
