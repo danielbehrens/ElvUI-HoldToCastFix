@@ -1,24 +1,18 @@
-# Changelog
+# ElvUI HoldToCastFix
 
-## [1.1.0] - 2026-02-08
+## [v1.2.0](https://github.com/danielbehrens/ElvUI-HoldToCastFix/tree/v1.2.0) (2026-02-09)
+[Full Changelog](https://github.com/danielbehrens/ElvUI-HoldToCastFix/commits/v1.2.0) [Previous Releases](https://github.com/danielbehrens/ElvUI-HoldToCastFix/releases)
 
-### Fixed
-- Bar 1 keybinds now correctly use flight abilities when mounted (dragonriding/skyriding)
-- Bar 1 keybinds now correctly use vehicle, override, possess, and shapeshift bar abilities
-- Fixed buttons not working after dismounting due to API state race condition
+- **Fixed keybinds breaking during forced mount encounters** (e.g. Dimensius phase transition in Manaforge Omega). When the encounter forces you to mount up mid-fight, the addon now correctly detects the bar change and temporarily steps aside, then seamlessly restores your keybinds when you dismount — all without needing to leave combat or reload.
+- Replaced the previous event-based detection with Blizzard's secure state driver system. This is more reliable and handles all bar paging scenarios (vehicles, dragonriding, shapeshift forms, possess bars) natively, including transitions that happen during combat.
+- Removed the timer-based workaround from v1.1.0 which could miss fast transitions.
+- Added support for WoW Interface version 12.0.1.
 
-### Added
-- Comprehensive bar paging detection (vehicle, override, possess, shapeshift, bonus bar, page changes)
-- Delayed recheck timer to handle event/API timing mismatches on dismount
-- Registered for all bar state change events (vehicle, bonus bar, shapeshift, page changes)
+## [v1.1.0](https://github.com/danielbehrens/ElvUI-HoldToCastFix/tree/v1.1.0) (2026-02-08)
+[Full Changelog](https://github.com/danielbehrens/ElvUI-HoldToCastFix/commits/v1.1.0) [Previous Releases](https://github.com/danielbehrens/ElvUI-HoldToCastFix/releases)
 
-## [1.0.0] - 2025-02-08
-
-### Added
-- Initial release
-- Routes keybinds for a selected ElvUI bar to Blizzard's native ActionButton frames
-- Restores Press and Hold Casting functionality with ElvUI
-- Configuration panel (`/holdtocast` or `/htcf`)
-- Support for bars 1, 3, 4, 5, 6, 13, 14, 15
-- Combat lockdown protection with deferred updates
-- Hooks into ElvUI's `HandleBinds` to re-apply after ElvUI binding changes
+- Fix bar1 paging conflicts with vehicles, dragonriding, and shapeshift  
+    Override bindings now correctly detect when bar1 is paged away (vehicle,  
+    dragonriding/skyriding, shapeshift, possess, bonus bar) and temporarily  
+    clear our bindings so the paged bar abilities work properly. Adds a  
+    delayed recheck timer to handle API state race conditions on dismount.  

@@ -3,9 +3,10 @@ local addonName, ns = ...
 local HoldToCastFix = CreateFrame("Frame", "HoldToCastFixFrame", UIParent)
 ns.HoldToCastFix = HoldToCastFix
 
--- Binding owner frame (separate so ClearOverrideBindings only clears ours)
-local bindingFrame = CreateFrame("Frame", "HoldToCastFixBindingOwner", UIParent)
-HoldToCastFix.bindingFrame = bindingFrame
+-- Binding owner frame: SecureHandlerStateTemplate so we can clear bindings
+-- during combat lockdown via the restricted environment's self:ClearBindings().
+local stateFrame = CreateFrame("Frame", "HoldToCastFixBindingOwner", UIParent, "SecureHandlerStateTemplate")
+HoldToCastFix.stateFrame = stateFrame
 
 -- Mapping: ElvUI bar number -> keybind target prefix (matches ElvUI barDefaults.bindButtons)
 local barToBindTarget = {
@@ -41,19 +42,50 @@ local defaults = {
 }
 
 HoldToCastFix.pendingUpdate = false
-HoldToCastFix.barPaged = false
-HoldToCastFix.recheckTimer = nil
+HoldToCastFix.stateDriverActive = false
 
--- Check if bar1 is paged away from its default page.
-local function IsBarPaged(barNum)
-    if barNum ~= 1 then return false end
+-- Build the macro condition string for bar1 paging detection.
+-- Matches ElvUI's bar1 conditions from ActionBars.lua lines 100-103.
+local function GetPagingConditions()
+    local conditions = ""
+    if GetOverrideBarIndex then
+        conditions = conditions .. "[overridebar] 0; "
+    end
+    if GetVehicleBarIndex then
+        conditions = conditions .. "[vehicleui] 0; [possessbar] 0; "
+    end
+    conditions = conditions .. "[bonusbar:5] 0; "
+    if GetTempShapeshiftBarIndex then
+        conditions = conditions .. "[shapeshift] 0; "
+    end
+    conditions = conditions .. "[bar:2] 0; [bar:3] 0; [bar:4] 0; [bar:5] 0; [bar:6] 0; "
+    conditions = conditions .. "1"
+    return conditions
+end
 
-    return HasVehicleActionBar()
-        or HasOverrideActionBar()
-        or (IsPossessBarVisible and IsPossessBarVisible())
-        or HasTempShapeshiftActionBar()
-        or HasBonusActionBar()
-        or (GetActionBarPage and GetActionBarPage() ~= 1)
+-- Secure handler snippet: runs in restricted environment (works during combat).
+-- When bar1 pages away (state "0"), clears our override bindings.
+-- When bar1 returns to default page (state "1"), signals Lua side to re-apply.
+stateFrame:SetAttribute("_onstate-htcfpage", [[
+    if newstate ~= "1" then
+        self:ClearBindings()
+    end
+    self:CallMethod("OnSecureStateChanged")
+]])
+
+-- Lua callback from the secure handler. Re-applies bindings when returning
+-- to the default bar page (outside combat) or defers if in combat.
+function stateFrame:OnSecureStateChanged()
+    local page = self:GetAttribute("state-htcfpage")
+    if page == "1" then
+        -- Bar returned to default page, re-apply our bindings
+        if InCombatLockdown() then
+            HoldToCastFix.pendingUpdate = true
+        else
+            HoldToCastFix:ApplyBindings()
+        end
+    end
+    -- When page ~= "1", the secure handler already cleared bindings
 end
 
 function HoldToCastFix:SetBindings()
@@ -71,63 +103,56 @@ function HoldToCastFix:SetBindings()
         local keys = {GetBindingKey(bindCommand)}
         for _, key in ipairs(keys) do
             if key and key ~= "" then
-                SetOverrideBinding(bindingFrame, true, key, bindCommand)
+                SetOverrideBinding(stateFrame, true, key, bindCommand)
             end
         end
     end
 end
 
-function HoldToCastFix:UpdateState()
+function HoldToCastFix:ApplyBindings()
     if InCombatLockdown() then
         self.pendingUpdate = true
         return
     end
 
+    ClearOverrideBindings(stateFrame)
+
     local db = HoldToCastFixDB
     if not db or not db.enabled then
-        ClearOverrideBindings(bindingFrame)
-        self.barPaged = false
+        self:DisableStateDriver()
         return
     end
 
-    local isPaged = IsBarPaged(db.bar)
-
-    if isPaged then
-        -- Bar is paged: clear our bindings, let ElvUI/Blizzard handle it
-        ClearOverrideBindings(bindingFrame)
-        self.barPaged = true
-    else
-        -- Bar is on default page: apply our native bindings for hold-to-cast
-        ClearOverrideBindings(bindingFrame)
+    -- Only apply bindings if we're on the default bar page
+    local page = stateFrame:GetAttribute("state-htcfpage")
+    if page == "1" or page == nil then
         self:SetBindings()
-        self.barPaged = false
+    end
+
+    -- Ensure state driver is registered for the configured bar
+    self:EnableStateDriver()
+end
+
+function HoldToCastFix:EnableStateDriver()
+    local db = HoldToCastFixDB
+    if not db or not db.enabled then return end
+
+    -- Only bar 1 needs paging detection; other bars don't page
+    if db.bar == 1 then
+        if not self.stateDriverActive then
+            RegisterStateDriver(stateFrame, "htcfpage", GetPagingConditions())
+            self.stateDriverActive = true
+        end
+    else
+        self:DisableStateDriver()
     end
 end
 
--- Alias for the ElvUI hook
-function HoldToCastFix:ApplyBindings()
-    self:UpdateState()
-end
-
--- Schedule a delayed recheck. When dismounting, multiple events fire but
--- the API state (HasBonusActionBar, GetActionBarPage, etc.) may not update
--- immediately. A short delay ensures we catch the final settled state.
-function HoldToCastFix:ScheduleRecheck()
-    if self.recheckTimer then
-        self.recheckTimer:Cancel()
+function HoldToCastFix:DisableStateDriver()
+    if self.stateDriverActive then
+        UnregisterStateDriver(stateFrame, "htcfpage")
+        self.stateDriverActive = false
     end
-    self.recheckTimer = C_Timer.NewTimer(0.2, function()
-        self.recheckTimer = nil
-        self:UpdateState()
-    end)
-end
-
--- Called on any bar state change event
-function HoldToCastFix:OnBarStateChanged()
-    -- Immediate check (handles transitions where the API is already updated)
-    self:UpdateState()
-    -- Delayed recheck (handles transitions where the API lags behind the event)
-    self:ScheduleRecheck()
 end
 
 function HoldToCastFix:Initialize()
@@ -147,32 +172,15 @@ function HoldToCastFix:Initialize()
             local AB = E:GetModule("ActionBars", true)
             if AB and AB.HandleBinds then
                 hooksecurefunc(AB, "HandleBinds", function()
-                    HoldToCastFix:UpdateState()
+                    HoldToCastFix:ApplyBindings()
                 end)
             end
         end
     end
 
-    self:UpdateState()
+    self:ApplyBindings()
 
-    -- Combat end: apply deferred updates
     self:RegisterEvent("PLAYER_REGEN_ENABLED")
-
-    -- Bar paging events: vehicle, override, possess
-    self:RegisterEvent("UPDATE_OVERRIDE_ACTIONBAR")
-    self:RegisterEvent("UPDATE_POSSESS_BAR")
-    self:RegisterEvent("VEHICLE_UPDATE")
-    self:RegisterEvent("UPDATE_VEHICLE_ACTIONBAR")
-    self:RegisterUnitEvent("UNIT_ENTERED_VEHICLE", "player")
-    self:RegisterUnitEvent("UNIT_EXITED_VEHICLE", "player")
-
-    -- Bonus bar (dragonriding/skyriding) and bar page changes
-    self:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
-    self:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
-
-    -- Shapeshift forms
-    self:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
-    self:RegisterEvent("UPDATE_SHAPESHIFT_FORMS")
 end
 
 HoldToCastFix:RegisterEvent("PLAYER_LOGIN")
@@ -183,10 +191,8 @@ HoldToCastFix:SetScript("OnEvent", function(self, event)
     elseif event == "PLAYER_REGEN_ENABLED" then
         if self.pendingUpdate then
             self.pendingUpdate = false
-            self:UpdateState()
+            self:ApplyBindings()
         end
-    else
-        self:OnBarStateChanged()
     end
 end)
 
