@@ -3,12 +3,16 @@ local addonName, ns = ...
 local HoldToCastFix = CreateFrame("Frame", "HoldToCastFixFrame", UIParent)
 ns.HoldToCastFix = HoldToCastFix
 
--- Binding owner frame: SecureHandlerStateTemplate so we can clear bindings
--- during combat lockdown via the restricted environment's self:ClearBindings().
-local stateFrame = CreateFrame("Frame", "HoldToCastFixBindingOwner", UIParent, "SecureHandlerStateTemplate")
+-- Plain frame for binding ownership (critical for hold-to-cast)
+local bindingFrame = CreateFrame("Frame", "HoldToCastFixBindingOwner", UIParent)
+HoldToCastFix.bindingFrame = bindingFrame
+
+-- Secure handler frame for combat-safe paging detection (bar1 only)
+local stateFrame = CreateFrame("Frame", "HoldToCastFixStateDriver", UIParent, "SecureHandlerStateTemplate")
+stateFrame:SetFrameRef("bindingFrame", bindingFrame)
 HoldToCastFix.stateFrame = stateFrame
 
--- Mapping: ElvUI bar number -> keybind target prefix (matches ElvUI barDefaults.bindButtons)
+-- Mapping: ElvUI bar number -> keybind target prefix
 local barToBindTarget = {
     [1]  = "ACTIONBUTTON",
     [3]  = "MULTIACTIONBAR3BUTTON",
@@ -21,10 +25,8 @@ local barToBindTarget = {
 }
 ns.barToBindTarget = barToBindTarget
 
--- Supported bar numbers for the config UI
 ns.supportedBars = {1, 3, 4, 5, 6, 13, 14, 15}
 
--- Blizzard button prefix (for display/status only)
 ns.barToBlizzButton = {
     [1]  = "ActionButton",
     [3]  = "MultiBarBottomRightButton",
@@ -39,13 +41,14 @@ ns.barToBlizzButton = {
 local defaults = {
     enabled = true,
     bar = 1,
+    minimap = { show = false, angle = 220 },
 }
 
 HoldToCastFix.pendingUpdate = false
+HoldToCastFix.bindingsActive = false
 HoldToCastFix.stateDriverActive = false
 
--- Build the macro condition string for bar1 paging detection.
--- Matches ElvUI's bar1 conditions from ActionBars.lua lines 100-103.
+-- Paging condition string for bar1 state driver
 local function GetPagingConditions()
     local conditions = ""
     if GetOverrideBarIndex then
@@ -63,29 +66,34 @@ local function GetPagingConditions()
     return conditions
 end
 
--- Secure handler snippet: runs in restricted environment (works during combat).
--- When bar1 pages away (state "0"), clears our override bindings.
--- When bar1 returns to default page (state "1"), signals Lua side to re-apply.
+-- Secure handler: clears bindings on the plain bindingFrame when bar1 pages away.
+-- Runs in restricted environment so it works during combat lockdown.
 stateFrame:SetAttribute("_onstate-htcfpage", [[
     if newstate ~= "1" then
-        self:ClearBindings()
+        local bf = self:GetFrameRef("bindingFrame")
+        if bf then
+            bf:ClearBindings()
+        end
     end
     self:CallMethod("OnSecureStateChanged")
 ]])
 
--- Lua callback from the secure handler. Re-applies bindings when returning
--- to the default bar page (outside combat) or defers if in combat.
+-- Lua callback: re-applies bindings when bar1 returns to default page.
+-- Note: GetAttribute returns numbers for numeric state values, so we
+-- use tostring() to ensure consistent comparison.
 function stateFrame:OnSecureStateChanged()
-    local page = self:GetAttribute("state-htcfpage")
-    if page == "1" then
-        -- Bar returned to default page, re-apply our bindings
+    local page = tostring(self:GetAttribute("state-htcfpage"))
+    if page ~= "1" then
+        HoldToCastFix.bindingsActive = false
+        if ns.UpdateActiveState then ns.UpdateActiveState() end
+    else
         if InCombatLockdown() then
             HoldToCastFix.pendingUpdate = true
         else
-            HoldToCastFix:ApplyBindings()
+            ClearOverrideBindings(bindingFrame)
+            HoldToCastFix:SetBindings()
         end
     end
-    -- When page ~= "1", the secure handler already cleared bindings
 end
 
 function HoldToCastFix:SetBindings()
@@ -103,10 +111,12 @@ function HoldToCastFix:SetBindings()
         local keys = {GetBindingKey(bindCommand)}
         for _, key in ipairs(keys) do
             if key and key ~= "" then
-                SetOverrideBinding(stateFrame, true, key, bindCommand)
+                SetOverrideBinding(bindingFrame, true, key, bindCommand)
             end
         end
     end
+    self.bindingsActive = true
+    if ns.UpdateActiveState then ns.UpdateActiveState() end
 end
 
 function HoldToCastFix:ApplyBindings()
@@ -115,21 +125,17 @@ function HoldToCastFix:ApplyBindings()
         return
     end
 
-    ClearOverrideBindings(stateFrame)
+    ClearOverrideBindings(bindingFrame)
+    self.bindingsActive = false
 
     local db = HoldToCastFixDB
     if not db or not db.enabled then
         self:DisableStateDriver()
+        if ns.UpdateActiveState then ns.UpdateActiveState() end
         return
     end
 
-    -- Only apply bindings if we're on the default bar page
-    local page = stateFrame:GetAttribute("state-htcfpage")
-    if page == "1" or page == nil then
-        self:SetBindings()
-    end
-
-    -- Ensure state driver is registered for the configured bar
+    self:SetBindings()
     self:EnableStateDriver()
 end
 
@@ -137,11 +143,10 @@ function HoldToCastFix:EnableStateDriver()
     local db = HoldToCastFixDB
     if not db or not db.enabled then return end
 
-    -- Only bar 1 needs paging detection; other bars don't page
     if db.bar == 1 then
         if not self.stateDriverActive then
-            RegisterStateDriver(stateFrame, "htcfpage", GetPagingConditions())
             self.stateDriverActive = true
+            RegisterStateDriver(stateFrame, "htcfpage", GetPagingConditions())
         end
     else
         self:DisableStateDriver()
@@ -165,7 +170,6 @@ function HoldToCastFix:Initialize()
         end
     end
 
-    -- Hook ElvUI's HandleBinds so we re-apply after ElvUI updates its bindings
     if ElvUI then
         local E = ElvUI[1]
         if E then
@@ -179,8 +183,11 @@ function HoldToCastFix:Initialize()
     end
 
     self:ApplyBindings()
-
     self:RegisterEvent("PLAYER_REGEN_ENABLED")
+
+    if ns.InitMinimapButton then
+        ns.InitMinimapButton()
+    end
 end
 
 HoldToCastFix:RegisterEvent("PLAYER_LOGIN")
@@ -196,7 +203,6 @@ HoldToCastFix:SetScript("OnEvent", function(self, event)
     end
 end)
 
--- Slash command to open config
 SLASH_HOLDTOCASTFIX1 = "/holdtocast"
 SLASH_HOLDTOCASTFIX2 = "/htcf"
 SlashCmdList["HOLDTOCASTFIX"] = function()

@@ -1,5 +1,11 @@
 # ElvUI HoldToCastFix
 
+## [v1.2.1](https://github.com/danielbehrens/ElvUI-HoldToCastFix/tree/v1.2.1) (2026-02-09)
+[Full Changelog](https://github.com/danielbehrens/ElvUI-HoldToCastFix/commits/v1.2.1) [Previous Releases](https://github.com/danielbehrens/ElvUI-HoldToCastFix/releases)
+
+- Added optional minimap icon (disabled by default) — click to open config, right-click to toggle on/off. Drag to reposition around the minimap.
+- Added a live status indicator showing whether the fix is currently active, visible on both the minimap icon and the config panel.
+
 ## [v1.2.0](https://github.com/danielbehrens/ElvUI-HoldToCastFix/tree/v1.2.0) (2026-02-09)
 [Full Changelog](https://github.com/danielbehrens/ElvUI-HoldToCastFix/commits/v1.2.0) [Previous Releases](https://github.com/danielbehrens/ElvUI-HoldToCastFix/releases)
 
