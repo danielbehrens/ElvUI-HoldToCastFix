@@ -18,6 +18,7 @@
 ## Category-zhCN: UI重构
 ## Category-zhTW: UI重構
 ## X-Curse-Project-ID: 1457385
+## X-Wago-ID: bGoyq860
 
 Core.lua
 Config.lua
