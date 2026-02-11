@@ -1,5 +1,15 @@
 # ElvUI HoldToCastFix
 
+## [v1.3.0](https://github.com/danielbehrens/ElvUI-HoldToCastFix/tree/v1.3.0) (2026-02-11)
+[Full Changelog](https://github.com/danielbehrens/ElvUI-HoldToCastFix/commits/v1.3.0) [Previous Releases](https://github.com/danielbehrens/ElvUI-HoldToCastFix/releases)
+
+- **Multi-bar support**: You can now enable Press and Hold Casting on multiple bars simultaneously instead of just one. The single bar dropdown has been replaced with checkboxes for each supported bar.
+- Bar 1 uses a separate binding frame from other bars so that bar 1 paging (vehicles, dragonriding, shapeshift) no longer disrupts bindings on other bars.
+- Saved variables automatically migrate from the old single-bar format — no action needed from users.
+- Updated config panel layout with two-column checkbox grid.
+- Status display now shows all active bars (e.g. "Active - Bars 1, 3, 5") and indicates when bar 1 is paged.
+- Minimap tooltip now lists configured bars and paging status.
+
 ## [v1.2.1](https://github.com/danielbehrens/ElvUI-HoldToCastFix/tree/v1.2.1) (2026-02-09)
 [Full Changelog](https://github.com/danielbehrens/ElvUI-HoldToCastFix/commits/v1.2.1) [Previous Releases](https://github.com/danielbehrens/ElvUI-HoldToCastFix/releases)
 

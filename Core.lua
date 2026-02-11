@@ -3,13 +3,17 @@ local addonName, ns = ...
 local HoldToCastFix = CreateFrame("Frame", "HoldToCastFixFrame", UIParent)
 ns.HoldToCastFix = HoldToCastFix
 
--- Plain frame for binding ownership (critical for hold-to-cast)
-local bindingFrame = CreateFrame("Frame", "HoldToCastFixBindingOwner", UIParent)
-HoldToCastFix.bindingFrame = bindingFrame
+-- Separate binding frames: bar1 needs its own so the state driver can clear
+-- only bar1 bindings when it pages away (vehicles, dragonriding, shapeshift)
+-- without wiping other bars' bindings.
+local bindingFrameBar1 = CreateFrame("Frame", "HoldToCastFixBindingOwnerBar1", UIParent)
+local bindingFrameOthers = CreateFrame("Frame", "HoldToCastFixBindingOwnerOthers", UIParent)
+HoldToCastFix.bindingFrameBar1 = bindingFrameBar1
+HoldToCastFix.bindingFrameOthers = bindingFrameOthers
 
 -- Secure handler frame for combat-safe paging detection (bar1 only)
 local stateFrame = CreateFrame("Frame", "HoldToCastFixStateDriver", UIParent, "SecureHandlerStateTemplate")
-stateFrame:SetFrameRef("bindingFrame", bindingFrame)
+stateFrame:SetFrameRef("bindingFrame", bindingFrameBar1)
 HoldToCastFix.stateFrame = stateFrame
 
 -- Mapping: ElvUI bar number -> keybind target prefix
@@ -40,13 +44,28 @@ ns.barToBlizzButton = {
 
 local defaults = {
     enabled = true,
-    bar = 1,
+    bars = { [1] = true },
     minimap = { show = false, angle = 220 },
 }
 
 HoldToCastFix.pendingUpdate = false
 HoldToCastFix.bindingsActive = false
 HoldToCastFix.stateDriverActive = false
+HoldToCastFix.bar1Paged = false
+
+local function HasBar1Enabled()
+    local db = HoldToCastFixDB
+    return db and db.bars and db.bars[1] or false
+end
+
+local function HasAnyNonBar1Enabled()
+    local db = HoldToCastFixDB
+    if not db or not db.bars then return false end
+    for _, barNum in ipairs(ns.supportedBars) do
+        if barNum ~= 1 and db.bars[barNum] then return true end
+    end
+    return false
+end
 
 -- Paging condition string for bar1 state driver
 local function GetPagingConditions()
@@ -66,8 +85,9 @@ local function GetPagingConditions()
     return conditions
 end
 
--- Secure handler: clears bindings on the plain bindingFrame when bar1 pages away.
+-- Secure handler: clears bar1 bindings when bar1 pages away.
 -- Runs in restricted environment so it works during combat lockdown.
+-- Only affects bindingFrameBar1 — other bars on bindingFrameOthers are untouched.
 stateFrame:SetAttribute("_onstate-htcfpage", [[
     if newstate ~= "1" then
         local bf = self:GetFrameRef("bindingFrame")
@@ -78,32 +98,32 @@ stateFrame:SetAttribute("_onstate-htcfpage", [[
     self:CallMethod("OnSecureStateChanged")
 ]])
 
--- Lua callback: re-applies bindings when bar1 returns to default page.
--- Note: GetAttribute returns numbers for numeric state values, so we
--- use tostring() to ensure consistent comparison.
+-- Lua callback: handles bar1 paging state changes.
+-- When bar1 pages away, only bar1 bindings are cleared (by the secure handler above).
+-- Other bars remain active on their separate binding frame.
 function stateFrame:OnSecureStateChanged()
     local page = tostring(self:GetAttribute("state-htcfpage"))
     if page ~= "1" then
-        HoldToCastFix.bindingsActive = false
+        HoldToCastFix.bar1Paged = true
+        HoldToCastFix.bindingsActive = HasAnyNonBar1Enabled()
         if ns.UpdateActiveState then ns.UpdateActiveState() end
     else
+        HoldToCastFix.bar1Paged = false
         if InCombatLockdown() then
             HoldToCastFix.pendingUpdate = true
         else
-            ClearOverrideBindings(bindingFrame)
-            HoldToCastFix:SetBindings()
+            ClearOverrideBindings(bindingFrameBar1)
+            HoldToCastFix:SetBar1Bindings()
         end
     end
 end
 
-function HoldToCastFix:SetBindings()
+-- Apply bindings for bar1 only (used when bar1 returns from paging)
+function HoldToCastFix:SetBar1Bindings()
     local db = HoldToCastFixDB
-    if not db or not db.enabled then return end
+    if not db or not db.enabled or not db.bars or not db.bars[1] then return end
 
-    local barNum = db.bar
-    if not barNum then return end
-
-    local bindPrefix = barToBindTarget[barNum]
+    local bindPrefix = barToBindTarget[1]
     if not bindPrefix then return end
 
     for i = 1, 12 do
@@ -111,11 +131,41 @@ function HoldToCastFix:SetBindings()
         local keys = {GetBindingKey(bindCommand)}
         for _, key in ipairs(keys) do
             if key and key ~= "" then
-                SetOverrideBinding(bindingFrame, true, key, bindCommand)
+                SetOverrideBinding(bindingFrameBar1, true, key, bindCommand)
             end
         end
     end
     self.bindingsActive = true
+    if ns.UpdateActiveState then ns.UpdateActiveState() end
+end
+
+-- Apply bindings for all enabled bars
+function HoldToCastFix:SetBindings()
+    local db = HoldToCastFixDB
+    if not db or not db.enabled or not db.bars then return end
+
+    local anyActive = false
+
+    for _, barNum in ipairs(ns.supportedBars) do
+        if db.bars[barNum] then
+            local bindPrefix = barToBindTarget[barNum]
+            if bindPrefix then
+                local bf = (barNum == 1) and bindingFrameBar1 or bindingFrameOthers
+                for i = 1, 12 do
+                    local bindCommand = bindPrefix .. i
+                    local keys = {GetBindingKey(bindCommand)}
+                    for _, key in ipairs(keys) do
+                        if key and key ~= "" then
+                            SetOverrideBinding(bf, true, key, bindCommand)
+                        end
+                    end
+                end
+                anyActive = true
+            end
+        end
+    end
+
+    self.bindingsActive = anyActive
     if ns.UpdateActiveState then ns.UpdateActiveState() end
 end
 
@@ -125,8 +175,10 @@ function HoldToCastFix:ApplyBindings()
         return
     end
 
-    ClearOverrideBindings(bindingFrame)
+    ClearOverrideBindings(bindingFrameBar1)
+    ClearOverrideBindings(bindingFrameOthers)
     self.bindingsActive = false
+    self.bar1Paged = false
 
     local db = HoldToCastFixDB
     if not db or not db.enabled then
@@ -143,7 +195,7 @@ function HoldToCastFix:EnableStateDriver()
     local db = HoldToCastFixDB
     if not db or not db.enabled then return end
 
-    if db.bar == 1 then
+    if HasBar1Enabled() then
         if not self.stateDriverActive then
             self.stateDriverActive = true
             RegisterStateDriver(stateFrame, "htcfpage", GetPagingConditions())
@@ -164,9 +216,24 @@ function HoldToCastFix:Initialize()
     if not HoldToCastFixDB then
         HoldToCastFixDB = {}
     end
+    local DB = HoldToCastFixDB
+
+    -- Migrate from old single-bar format to multi-bar
+    if DB.bar ~= nil then
+        if DB.bars == nil then
+            DB.bars = { [DB.bar] = true }
+        end
+        DB.bar = nil
+    end
+
+    -- Apply defaults for missing keys
     for k, v in pairs(defaults) do
-        if HoldToCastFixDB[k] == nil then
-            HoldToCastFixDB[k] = v
+        if DB[k] == nil then
+            if type(v) == "table" then
+                DB[k] = CopyTable(v)
+            else
+                DB[k] = v
+            end
         end
     end
 
@@ -182,12 +249,12 @@ function HoldToCastFix:Initialize()
         end
     end
 
-    self:ApplyBindings()
-    self:RegisterEvent("PLAYER_REGEN_ENABLED")
-
     if ns.InitMinimapButton then
         ns.InitMinimapButton()
     end
+
+    self:ApplyBindings()
+    self:RegisterEvent("PLAYER_REGEN_ENABLED")
 end
 
 HoldToCastFix:RegisterEvent("PLAYER_LOGIN")

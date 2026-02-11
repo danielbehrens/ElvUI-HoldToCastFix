@@ -4,6 +4,21 @@ local configFrame = nil
 local minimapButton = nil
 local minimapText = nil
 local statusIndicator = nil
+local barCheckboxes = {}
+
+-- Helper: build comma-separated string of enabled bar numbers
+local function GetEnabledBarString()
+    local db = HoldToCastFixDB
+    local barList = {}
+    if db and db.bars then
+        for _, barNum in ipairs(ns.supportedBars) do
+            if db.bars[barNum] then
+                barList[#barList + 1] = tostring(barNum)
+            end
+        end
+    end
+    return #barList > 0 and table.concat(barList, ", ") or "none"
+end
 
 -- Minimap button positioning
 local function UpdateMinimapButtonPosition()
@@ -44,12 +59,18 @@ local function CreateMinimapButton()
     btn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:AddLine("ElvUI HoldToCastFix")
-        local active = ns.HoldToCastFix and ns.HoldToCastFix.bindingsActive
+        local htcf = ns.HoldToCastFix
+        local active = htcf and htcf.bindingsActive
         if active then
             GameTooltip:AddLine("Status: Active", 0, 1, 0)
+            GameTooltip:AddLine("Bars: " .. GetEnabledBarString(), 0.8, 0.8, 0.8)
+            if htcf.bar1Paged then
+                GameTooltip:AddLine("(Bar 1 paged)", 1, 0.7, 0)
+            end
         else
             GameTooltip:AddLine("Status: Inactive", 1, 0.4, 0)
         end
+        GameTooltip:AddLine(" ")
         GameTooltip:AddLine("Left-click to open config", 0.7, 0.7, 0.7)
         GameTooltip:AddLine("Right-click to toggle on/off", 0.7, 0.7, 0.7)
         GameTooltip:Show()
@@ -133,7 +154,9 @@ end
 
 -- Updates both minimap icon and config panel to reflect active binding state
 function ns.UpdateActiveState()
-    local active = ns.HoldToCastFix and ns.HoldToCastFix.bindingsActive
+    local htcf = ns.HoldToCastFix
+    local active = htcf and htcf.bindingsActive
+    local bar1Paged = htcf and htcf.bar1Paged
 
     -- Minimap icon: gold when active, dim grey when inactive
     if minimapText then
@@ -146,14 +169,22 @@ function ns.UpdateActiveState()
 
     -- Config panel status indicator
     if statusIndicator then
-        if active then
-            statusIndicator:SetText("|cff00ff00Active|r - Bar " .. (HoldToCastFixDB and HoldToCastFixDB.bar or "?"))
-        else
-            local db = HoldToCastFixDB
-            if db and not db.enabled then
-                statusIndicator:SetText("|cffff0000Disabled|r")
+        local db = HoldToCastFixDB
+        local barStr = GetEnabledBarString()
+
+        if db and not db.enabled then
+            statusIndicator:SetText("|cffff0000Disabled|r")
+        elseif active then
+            if bar1Paged then
+                statusIndicator:SetText("|cff00ff00Active|r - Bars " .. barStr .. "\n|cffffaa00(bar 1 paged)|r")
             else
-                statusIndicator:SetText("|cffffaa00Inactive|r (bar paged)")
+                statusIndicator:SetText("|cff00ff00Active|r - Bars " .. barStr)
+            end
+        else
+            if bar1Paged then
+                statusIndicator:SetText("|cffffaa00Inactive|r (bar 1 paged)")
+            else
+                statusIndicator:SetText("|cffffaa00Inactive|r")
             end
         end
     end
@@ -161,7 +192,7 @@ end
 
 local function CreateConfigPanel()
     local frame = CreateFrame("Frame", "HoldToCastFixConfigFrame", UIParent, "BasicFrameTemplateWithInset")
-    frame:SetSize(260, 230)
+    frame:SetSize(260, 330)
     frame:SetPoint("CENTER")
     frame:SetMovable(true)
     frame:EnableMouse(true)
@@ -209,42 +240,41 @@ local function CreateConfigPanel()
     desc:SetPoint("RIGHT", frame.InsetBg, "RIGHT", -10, 0)
     desc:SetJustifyH("LEFT")
     desc:SetTextColor(0.7, 0.7, 0.7)
-    desc:SetText("Routes keybinds for the selected bar to Blizzard's native buttons, enabling Press and Hold Casting.")
+    desc:SetText("Routes keybinds for the selected bars to Blizzard's native buttons, enabling Press and Hold Casting.")
 
-    -- Bar label
-    local barLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    barLabel:SetPoint("TOPLEFT", desc, "BOTTOMLEFT", 0, -14)
-    barLabel:SetText("Action Bar:")
+    -- Bar selection label
+    local barsLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    barsLabel:SetPoint("TOPLEFT", desc, "BOTTOMLEFT", 0, -10)
+    barsLabel:SetText("Fix these bars:")
 
-    -- Bar dropdown
-    local barDropdown = CreateFrame("Frame", "HoldToCastFixBarDropdown", frame, "UIDropDownMenuTemplate")
-    barDropdown:SetPoint("LEFT", barLabel, "RIGHT", -4, -2)
-    frame.barDropdown = barDropdown
+    -- Bar checkboxes in two-column layout
+    for idx, barNum in ipairs(ns.supportedBars) do
+        local check = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
+        local col = (idx - 1) % 2        -- 0 or 1
+        local row = math.floor((idx - 1) / 2)  -- 0, 1, 2, 3
 
-    local function BarDropdown_Initialize(self, level)
-        for _, barNum in ipairs(ns.supportedBars) do
-            local info = UIDropDownMenu_CreateInfo()
-            info.text = "Bar " .. barNum
-            info.value = barNum
-            info.func = function(self)
-                db.bar = self.value
-                UIDropDownMenu_SetText(barDropdown, "Bar " .. self.value)
-                CloseDropDownMenus()
-            end
-            info.checked = (db.bar == barNum)
-            UIDropDownMenu_AddButton(info, level)
+        if col == 0 then
+            check:SetPoint("TOPLEFT", barsLabel, "BOTTOMLEFT", 0, -(row * 24) - 2)
+        else
+            check:SetPoint("TOPLEFT", barsLabel, "BOTTOMLEFT", 120, -(row * 24) - 2)
         end
-    end
 
-    UIDropDownMenu_SetWidth(barDropdown, 90)
-    UIDropDownMenu_SetText(barDropdown, "Bar " .. (db.bar or 1))
-    UIDropDownMenu_Initialize(barDropdown, BarDropdown_Initialize)
+        check.text:SetText("Bar " .. barNum)
+        check.text:SetFontObject("GameFontHighlight")
+        check:SetChecked(db.bars and db.bars[barNum] or false)
+        check:SetScript("OnClick", function(self)
+            if not db.bars then db.bars = {} end
+            db.bars[barNum] = self:GetChecked() or nil
+        end)
+        barCheckboxes[barNum] = check
+    end
 
     -- Status indicator
     statusIndicator = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    statusIndicator:SetPoint("BOTTOMLEFT", frame.InsetBg, "BOTTOMLEFT", 14, 40)
-    statusIndicator:SetPoint("BOTTOMRIGHT", frame.InsetBg, "BOTTOMRIGHT", -14, 40)
+    statusIndicator:SetPoint("BOTTOMLEFT", frame.InsetBg, "BOTTOMLEFT", 14, 46)
+    statusIndicator:SetPoint("BOTTOMRIGHT", frame.InsetBg, "BOTTOMRIGHT", -14, 46)
     statusIndicator:SetJustifyH("CENTER")
+    statusIndicator:SetWordWrap(true)
 
     -- Apply button
     local applyBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
@@ -253,13 +283,15 @@ local function CreateConfigPanel()
     applyBtn:SetText("Apply")
     applyBtn:SetScript("OnClick", function()
         ns.HoldToCastFix:ApplyBindings()
-        print("|cff00ff00HoldToCastFix:|r Settings applied - Bar " .. db.bar .. " routed to Blizzard buttons")
+        print("|cff00ff00HoldToCastFix:|r Settings applied - Bars " .. GetEnabledBarString() .. " routed to Blizzard buttons")
     end)
 
     frame:SetScript("OnShow", function()
         enableCheck:SetChecked(db.enabled)
         minimapCheck:SetChecked(db.minimap and db.minimap.show or false)
-        UIDropDownMenu_SetText(barDropdown, "Bar " .. (db.bar or 1))
+        for barNum, check in pairs(barCheckboxes) do
+            check:SetChecked(db.bars and db.bars[barNum] or false)
+        end
         ns.UpdateActiveState()
     end)
 
