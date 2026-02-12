@@ -1,5 +1,11 @@
 # ElvUI HoldToCastFix
 
+## [v1.3.1](https://github.com/danielbehrens/ElvUI-HoldToCastFix/tree/v1.3.1) (2026-02-13)
+[Full Changelog](https://github.com/danielbehrens/ElvUI-HoldToCastFix/commits/v1.3.1) [Previous Releases](https://github.com/danielbehrens/ElvUI-HoldToCastFix/releases)
+
+- Fixed state driver values not matching due to type mismatch — state values can arrive as numbers instead of strings, causing the paging check to fail silently. Added `tostring()` conversion to ensure reliable comparison.
+- Fixed re-enabling the state driver after toggling bars not correctly re-evaluating the current paging state, which could leave bar 1 bindings in the wrong state.
+
 ## [v1.3.0](https://github.com/danielbehrens/ElvUI-HoldToCastFix/tree/v1.3.0) (2026-02-11)
 [Full Changelog](https://github.com/danielbehrens/ElvUI-HoldToCastFix/commits/v1.3.0) [Previous Releases](https://github.com/danielbehrens/ElvUI-HoldToCastFix/releases)
 

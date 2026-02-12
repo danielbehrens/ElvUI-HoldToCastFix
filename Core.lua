@@ -89,7 +89,8 @@ end
 -- Runs in restricted environment so it works during combat lockdown.
 -- Only affects bindingFrameBar1 — other bars on bindingFrameOthers are untouched.
 stateFrame:SetAttribute("_onstate-htcfpage", [[
-    if newstate ~= "1" then
+    -- tostring() because state driver values may arrive as numbers (1 vs "1")
+    if tostring(newstate) ~= "1" then
         local bf = self:GetFrameRef("bindingFrame")
         if bf then
             bf:ClearBindings()
@@ -199,6 +200,19 @@ function HoldToCastFix:EnableStateDriver()
         if not self.stateDriverActive then
             self.stateDriverActive = true
             RegisterStateDriver(stateFrame, "htcfpage", GetPagingConditions())
+            -- RegisterStateDriver fires _onstate- immediately, which handles
+            -- the initial state. No further action needed here.
+        else
+            -- State driver already active — re-check current state so that
+            -- ApplyBindings() + EnableStateDriver() stays consistent after
+            -- the paging flags were reset in ApplyBindings().
+            local page = tostring(stateFrame:GetAttribute("state-htcfpage") or "")
+            if page ~= "1" then
+                self.bar1Paged = true
+                ClearOverrideBindings(bindingFrameBar1)
+                self.bindingsActive = HasAnyNonBar1Enabled()
+            end
+            if ns.UpdateActiveState then ns.UpdateActiveState() end
         end
     else
         self:DisableStateDriver()

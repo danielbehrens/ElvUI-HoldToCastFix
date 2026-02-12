@@ -2,7 +2,7 @@
 ## Title: ElvUI HoldToCastFix
 ## Notes: Fixes Press and Hold Casting for ElvUI action bar buttons by routing keybinds to Blizzard's native ActionButton frames.
 ## Author: HoldToCastFix
-## Version: 1.3.0
+## Version: 1.3.1
 ## SavedVariables: HoldToCastFixDB
 ## OptionalDeps: ElvUI
 ## Group: ElvUI
