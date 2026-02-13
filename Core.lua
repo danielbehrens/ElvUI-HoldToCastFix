@@ -4,7 +4,7 @@ local HoldToCastFix = CreateFrame("Frame", "HoldToCastFixFrame", UIParent)
 ns.HoldToCastFix = HoldToCastFix
 
 -- Separate binding frames: bar1 needs its own so the state driver can clear
--- only bar1 bindings when it pages away (vehicles, dragonriding, shapeshift)
+-- only bar1 bindings when bar1 pages away (vehicles, dragonriding, shapeshift)
 -- without wiping other bars' bindings.
 local bindingFrameBar1 = CreateFrame("Frame", "HoldToCastFixBindingOwnerBar1", UIParent)
 local bindingFrameOthers = CreateFrame("Frame", "HoldToCastFixBindingOwnerOthers", UIParent)
@@ -53,6 +53,21 @@ HoldToCastFix.bindingsActive = false
 HoldToCastFix.stateDriverActive = false
 HoldToCastFix.bar1Paged = false
 
+-- Debug event log (ring buffer, newest at end)
+local DEBUG_LOG_MAX = 40
+HoldToCastFix.debugLog = {}
+
+local function DebugLog(msg)
+    local log = HoldToCastFix.debugLog
+    local ts = format("%.1f", GetTime() % 10000) -- compact timestamp
+    log[#log + 1] = ts .. "  " .. msg
+    if #log > DEBUG_LOG_MAX then
+        table.remove(log, 1)
+    end
+    if ns.RefreshDebugPanel then ns.RefreshDebugPanel() end
+end
+ns.DebugLog = DebugLog
+
 local function HasBar1Enabled()
     local db = HoldToCastFixDB
     return db and db.bars and db.bars[1] or false
@@ -67,7 +82,11 @@ local function HasAnyNonBar1Enabled()
     return false
 end
 
--- Paging condition string for bar1 state driver
+-- Paging condition string for bar1 state driver.
+-- ElvUI disables Blizzard's ActionBarController, so Blizzard's native
+-- ActionButton frames do NOT page for vehicle/override/bonusbar/shapeshift.
+-- We must detect all paging states and clear our bar1 bindings so ElvUI's
+-- own bindings (which DO page correctly) take over.
 local function GetPagingConditions()
     local conditions = ""
     if GetOverrideBarIndex then
@@ -102,21 +121,30 @@ stateFrame:SetAttribute("_onstate-htcfpage", [[
 -- Lua callback: handles bar1 paging state changes.
 -- When bar1 pages away, only bar1 bindings are cleared (by the secure handler above).
 -- Other bars remain active on their separate binding frame.
+-- When bar1 returns from paging during combat, we can't restore bindings until
+-- combat ends (WoW API limitation), so we defer via pendingUpdate.
 function stateFrame:OnSecureStateChanged()
     local page = tostring(self:GetAttribute("state-htcfpage"))
+    DebugLog("StateChanged: page=" .. page .. " combat=" .. tostring(InCombatLockdown()))
     if page ~= "1" then
         HoldToCastFix.bar1Paged = true
         HoldToCastFix.bindingsActive = HasAnyNonBar1Enabled()
-        if ns.UpdateActiveState then ns.UpdateActiveState() end
+        DebugLog("  -> bar1Paged=true, active=" .. tostring(HoldToCastFix.bindingsActive))
     else
         HoldToCastFix.bar1Paged = false
         if InCombatLockdown() then
+            -- Can't call SetOverrideBinding during combat; defer to PLAYER_REGEN_ENABLED.
+            -- Bar1 hold-to-cast is unavailable until combat ends, but ElvUI's own
+            -- bindings still work (spells fire, just without hold-to-cast).
             HoldToCastFix.pendingUpdate = true
+            DebugLog("  -> bar1Paged=false, DEFERRED (combat)")
         else
             ClearOverrideBindings(bindingFrameBar1)
             HoldToCastFix:SetBar1Bindings()
+            DebugLog("  -> bar1Paged=false, bindings restored")
         end
     end
+    if ns.UpdateActiveState then ns.UpdateActiveState() end
 end
 
 -- Apply bindings for bar1 only (used when bar1 returns from paging)
@@ -173,9 +201,11 @@ end
 function HoldToCastFix:ApplyBindings()
     if InCombatLockdown() then
         self.pendingUpdate = true
+        DebugLog("ApplyBindings: DEFERRED (combat)")
         return
     end
 
+    DebugLog("ApplyBindings: clearing all")
     ClearOverrideBindings(bindingFrameBar1)
     ClearOverrideBindings(bindingFrameOthers)
     self.bindingsActive = false
@@ -184,12 +214,14 @@ function HoldToCastFix:ApplyBindings()
     local db = HoldToCastFixDB
     if not db or not db.enabled then
         self:DisableStateDriver()
+        DebugLog("ApplyBindings: disabled, done")
         if ns.UpdateActiveState then ns.UpdateActiveState() end
         return
     end
 
     self:SetBindings()
     self:EnableStateDriver()
+    DebugLog("ApplyBindings: done, active=" .. tostring(self.bindingsActive) .. " paged=" .. tostring(self.bar1Paged))
 end
 
 function HoldToCastFix:EnableStateDriver()
@@ -199,6 +231,7 @@ function HoldToCastFix:EnableStateDriver()
     if HasBar1Enabled() then
         if not self.stateDriverActive then
             self.stateDriverActive = true
+            DebugLog("EnableStateDriver: registering (first time)")
             RegisterStateDriver(stateFrame, "htcfpage", GetPagingConditions())
             -- RegisterStateDriver fires _onstate- immediately, which handles
             -- the initial state. No further action needed here.
@@ -207,6 +240,7 @@ function HoldToCastFix:EnableStateDriver()
             -- ApplyBindings() + EnableStateDriver() stays consistent after
             -- the paging flags were reset in ApplyBindings().
             local page = tostring(stateFrame:GetAttribute("state-htcfpage") or "")
+            DebugLog("EnableStateDriver: already active, page=" .. page)
             if page ~= "1" then
                 self.bar1Paged = true
                 ClearOverrideBindings(bindingFrameBar1)
@@ -257,6 +291,7 @@ function HoldToCastFix:Initialize()
             local AB = E:GetModule("ActionBars", true)
             if AB and AB.HandleBinds then
                 hooksecurefunc(AB, "HandleBinds", function()
+                    DebugLog("Hook: AB:HandleBinds fired")
                     HoldToCastFix:ApplyBindings()
                 end)
             end
@@ -276,7 +311,9 @@ HoldToCastFix:SetScript("OnEvent", function(self, event)
     if event == "PLAYER_LOGIN" then
         self:UnregisterEvent("PLAYER_LOGIN")
         self:Initialize()
+        DebugLog("PLAYER_LOGIN: initialized")
     elseif event == "PLAYER_REGEN_ENABLED" then
+        DebugLog("REGEN_ENABLED: pending=" .. tostring(self.pendingUpdate))
         if self.pendingUpdate then
             self.pendingUpdate = false
             self:ApplyBindings()
