@@ -1,0 +1,33 @@
+{
+  "diagnostics": {
+    "globals": [
+      "ElvUI",
+      "CreateFrame",
+      "UIParent",
+      "Minimap",
+      "GameTooltip",
+      "HoldToCastFixDB",
+      "SlashCmdList",
+      "SLASH_HOLDTOCASTFIX1",
+      "SLASH_HOLDTOCASTFIX2",
+      "InCombatLockdown",
+      "GetBindingKey",
+      "GetBindingAction",
+      "SetOverrideBinding",
+      "ClearOverrideBindings",
+      "RegisterStateDriver",
+      "UnregisterStateDriver",
+      "GetOverrideBarIndex",
+      "GetVehicleBarIndex",
+      "GetTempShapeshiftBarIndex",
+      "GetOverrideBindingForFrame",
+      "GetCursorPosition",
+      "GetTime",
+      "CopyTable",
+      "C_AddOns",
+      "hooksecurefunc",
+      "format",
+      "print"
+    ]
+  }
+}
