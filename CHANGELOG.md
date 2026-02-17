@@ -1,5 +1,13 @@
 # ElvUI HoldToCastFix
 
+## [v1.5.0](https://github.com/danielbehrens/ElvUI-HoldToCastFix/tree/v1.5.0) (2026-02-17)
+[Full Changelog](https://github.com/danielbehrens/ElvUI-HoldToCastFix/commits/v1.5.0) [Previous Releases](https://github.com/danielbehrens/ElvUI-HoldToCastFix/releases)
+
+- Fixed hold-to-cast not working in Druid forms (Cat Form, Bear Form, Moonkin, etc.) and other classes with bar paging (Rogue Shadow Dance, Warrior stances, Evoker)
+- Hold-to-cast now stays active when switching forms — no more falling back to normal click-to-cast
+- Fixed "Invalid frame handle" error that could occur when entering vehicles or dragonriding
+- Bar 1 bindings now correctly restore after exiting a vehicle, even during combat
+
 ## [v1.4.0](https://github.com/danielbehrens/ElvUI-HoldToCastFix/tree/v1.4.0) (2026-02-13)
 [Full Changelog](https://github.com/danielbehrens/ElvUI-HoldToCastFix/commits/v1.4.0) [Previous Releases](https://github.com/danielbehrens/ElvUI-HoldToCastFix/releases)
 

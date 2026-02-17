@@ -174,6 +174,7 @@ function ns.UpdateActiveState()
     local active = htcf and htcf.bindingsActive
     local bar1Paged = htcf and htcf.bar1Paged
     local pendingUpdate = htcf and htcf.pendingUpdate
+    local bar1Page = htcf and htcf.bar1Page or 1
 
     -- Minimap icon: gold when active, dim grey when inactive
     if minimapText then
@@ -192,20 +193,17 @@ function ns.UpdateActiveState()
         if db and not db.enabled then
             statusIndicator:SetText("|cffff0000Disabled|r")
         elseif active then
-            if bar1Paged then
-                statusIndicator:SetText("|cff00ff00Active|r - Bars " .. barStr .. "\n|cffffaa00(bar 1 paged)|r")
+            if bar1Page > 1 then
+                statusIndicator:SetText("|cff00ff00Active|r - Bars " .. barStr .. "\n|cff00ccff(bar 1: page " .. bar1Page .. ")|r")
             else
                 statusIndicator:SetText("|cff00ff00Active|r - Bars " .. barStr)
             end
-        elseif pendingUpdate and not bar1Paged then
-            -- Bar1 returned from paging during combat — bindings restore after combat
+        elseif pendingUpdate then
             statusIndicator:SetText("|cffffaa00Pending|r - restoring after combat")
+        elseif bar1Paged then
+            statusIndicator:SetText("|cffffaa00Inactive|r (vehicle/override)")
         else
-            if bar1Paged then
-                statusIndicator:SetText("|cffffaa00Inactive|r (bar 1 paged)")
-            else
-                statusIndicator:SetText("|cffffaa00Inactive|r")
-            end
+            statusIndicator:SetText("|cffffaa00Inactive|r")
         end
     end
 end
@@ -401,6 +399,7 @@ local function BuildDebugLines(plain)
     L("enabled:           " .. S(HoldToCastFixDB and HoldToCastFixDB.enabled))
     L("bindingsActive:    " .. S(htcf.bindingsActive))
     L("bar1Paged:         " .. S(htcf.bar1Paged))
+    L("bar1Page:          " .. S(htcf.bar1Page))
     L("pendingUpdate:     " .. S(htcf.pendingUpdate))
     L("stateDriverActive: " .. S(htcf.stateDriverActive))
     L("InCombatLockdown:  " .. S(InCombatLockdown()))

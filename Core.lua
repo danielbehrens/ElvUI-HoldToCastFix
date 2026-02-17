@@ -4,9 +4,11 @@ local HoldToCastFix = CreateFrame("Frame", "HoldToCastFixFrame", UIParent)
 ns.HoldToCastFix = HoldToCastFix
 
 -- Separate binding frames: bar1 needs its own so the state driver can clear
--- only bar1 bindings when bar1 pages away (vehicles, dragonriding, shapeshift)
+-- only bar1 bindings when bar1 pages away (vehicles, dragonriding)
 -- without wiping other bars' bindings.
-local bindingFrameBar1 = CreateFrame("Frame", "HoldToCastFixBindingOwnerBar1", UIParent)
+-- bar1 frame MUST be secure (SecureFrameTemplate) so ClearBindings() works
+-- in the restricted execution environment of secure handlers during combat.
+local bindingFrameBar1 = CreateFrame("Frame", "HoldToCastFixBindingOwnerBar1", UIParent, "SecureFrameTemplate")
 local bindingFrameOthers = CreateFrame("Frame", "HoldToCastFixBindingOwnerOthers", UIParent)
 HoldToCastFix.bindingFrameBar1 = bindingFrameBar1
 HoldToCastFix.bindingFrameOthers = bindingFrameOthers
@@ -52,6 +54,7 @@ HoldToCastFix.pendingUpdate = false
 HoldToCastFix.bindingsActive = false
 HoldToCastFix.stateDriverActive = false
 HoldToCastFix.bar1Paged = false
+HoldToCastFix.bar1Page = 1
 
 -- Debug event log (ring buffer, newest at end)
 local DEBUG_LOG_MAX = 40
@@ -82,72 +85,110 @@ local function HasAnyNonBar1Enabled()
     return false
 end
 
--- Paging condition string for bar1 state driver.
--- ElvUI disables Blizzard's ActionBarController, so Blizzard's native
--- ActionButton frames do NOT page for vehicle/override/bonusbar/shapeshift.
--- We must detect all paging states and clear our bar1 bindings so ElvUI's
--- own bindings (which DO page correctly) take over.
+-- Build paging condition string for bar1 state driver.
+-- Returns actual page numbers matching ElvUI's bar1 paging.
+-- Vehicle/override/possess return 0 (bindings cleared, let ElvUI handle).
+-- Form paging returns actual page numbers for tracking; the engine-side page
+-- is handled by ActionBarController (we re-register its form events).
 local function GetPagingConditions()
     local conditions = ""
+
+    -- Vehicle/override/possess: return 0 (clear bindings for these)
     if GetOverrideBarIndex then
         conditions = conditions .. "[overridebar] 0; "
     end
     if GetVehicleBarIndex then
         conditions = conditions .. "[vehicleui] 0; [possessbar] 0; "
     end
-    conditions = conditions .. "[bonusbar:5] 0; "
-    if GetTempShapeshiftBarIndex then
-        conditions = conditions .. "[shapeshift] 0; "
+
+    -- Class-specific paging from ElvUI config (produces actual page numbers)
+    -- e.g. Druid: "[bonusbar:1,nostealth] 7; [bonusbar:1,stealth] 8; ..."
+    if ElvUI then
+        local E = ElvUI[1]
+        if E and E.db and E.db.actionbar and E.db.actionbar.bar1
+           and E.db.actionbar.bar1.paging then
+            local classPaging = E.db.actionbar.bar1.paging[E.myclass]
+            if classPaging and classPaging ~= "" then
+                classPaging = classPaging:gsub("[\n\r]", "")
+                conditions = conditions .. classPaging .. " "
+            end
+        end
     end
-    conditions = conditions .. "[bar:2] 0; [bar:3] 0; [bar:4] 0; [bar:5] 0; [bar:6] 0; "
+
+    -- Temp shapeshift bar (quest transformations, etc.)
+    if GetTempShapeshiftBarIndex then
+        conditions = conditions .. format("[shapeshift] %d; ", GetTempShapeshiftBarIndex())
+    end
+
+    -- Manual bar switching
+    conditions = conditions .. "[bar:2] 2; [bar:3] 3; [bar:4] 4; [bar:5] 5; [bar:6] 6; "
+
+    -- Rogue Shadow Dance / special bonusbar:5
+    conditions = conditions .. "[bonusbar:5] 11; "
+
+    -- Default: page 1
     conditions = conditions .. "1"
+
+    DebugLog("PagingConditions: " .. conditions)
     return conditions
 end
 
--- Secure handler: clears bar1 bindings when bar1 pages away.
--- Runs in restricted environment so it works during combat lockdown.
--- Only affects bindingFrameBar1 — other bars on bindingFrameOthers are untouched.
+-- Secure handler: manages bar1 paging.
+-- For vehicle/override (page == 0), clears bindings and lets ElvUI handle.
+-- For form paging (page >= 1), bindings stay active — the engine-side page
+-- is updated by ActionBarController so ACTIONBUTTON bindings fire correctly.
 stateFrame:SetAttribute("_onstate-htcfpage", [[
-    -- tostring() because state driver values may arrive as numbers (1 vs "1")
-    if tostring(newstate) ~= "1" then
+    local page = tonumber(newstate)
+
+    if not page or page == 0 then
+        -- Vehicle/override/possess: clear bindings, let ElvUI handle
         local bf = self:GetFrameRef("bindingFrame")
         if bf then
             bf:ClearBindings()
         end
     end
+
     self:CallMethod("OnSecureStateChanged")
 ]])
 
 -- Lua callback: handles bar1 paging state changes.
--- When bar1 pages away, only bar1 bindings are cleared (by the secure handler above).
--- Other bars remain active on their separate binding frame.
--- When bar1 returns from paging during combat, we can't restore bindings until
--- combat ends (WoW API limitation), so we defer via pendingUpdate.
+-- page == 0: vehicle/override — bindings cleared by secure handler
+-- page >= 1: normal or form — bindings stay active, engine handles paging
 function stateFrame:OnSecureStateChanged()
-    local page = tostring(self:GetAttribute("state-htcfpage"))
-    DebugLog("StateChanged: page=" .. page .. " combat=" .. tostring(InCombatLockdown()))
-    if page ~= "1" then
+    local page = tonumber(self:GetAttribute("state-htcfpage")) or 0
+    DebugLog("StateChanged: page=" .. tostring(page) .. " combat=" .. tostring(InCombatLockdown()))
+
+    HoldToCastFix.bar1Page = page
+
+    if page == 0 then
+        -- Vehicle/override/possess: bindings cleared by secure handler
         HoldToCastFix.bar1Paged = true
         HoldToCastFix.bindingsActive = HasAnyNonBar1Enabled()
-        DebugLog("  -> bar1Paged=true, active=" .. tostring(HoldToCastFix.bindingsActive))
+        DebugLog("  -> bar1Paged=true (vehicle/override), active=" .. tostring(HoldToCastFix.bindingsActive))
     else
-        HoldToCastFix.bar1Paged = false
-        if InCombatLockdown() then
-            -- Can't call SetOverrideBinding during combat; defer to PLAYER_REGEN_ENABLED.
-            -- Bar1 hold-to-cast is unavailable until combat ends, but ElvUI's own
-            -- bindings still work (spells fire, just without hold-to-cast).
-            HoldToCastFix.pendingUpdate = true
-            DebugLog("  -> bar1Paged=false, DEFERRED (combat)")
+        if HoldToCastFix.bar1Paged then
+            -- Returning from vehicle/override — need to restore bar1 bindings
+            HoldToCastFix.bar1Paged = false
+            if InCombatLockdown() then
+                HoldToCastFix.pendingUpdate = true
+                HoldToCastFix.bindingsActive = HasAnyNonBar1Enabled()
+                DebugLog("  -> returning from vehicle, DEFERRED (combat), page=" .. page)
+            else
+                ClearOverrideBindings(bindingFrameBar1)
+                HoldToCastFix:SetBar1Bindings()
+                DebugLog("  -> returning from vehicle, bindings restored, page=" .. page)
+            end
         else
-            ClearOverrideBindings(bindingFrameBar1)
-            HoldToCastFix:SetBar1Bindings()
-            DebugLog("  -> bar1Paged=false, bindings restored")
+            -- Normal form switch: bindings stay active, engine pages ACTIONBUTTON
+            HoldToCastFix.bindingsActive = true
+            DebugLog("  -> page=" .. page .. ", hold-to-cast active")
         end
     end
+
     if ns.UpdateActiveState then ns.UpdateActiveState() end
 end
 
--- Apply bindings for bar1 only (used when bar1 returns from paging)
+-- Apply bindings for bar1 only (used when bar1 returns from vehicle/override)
 function HoldToCastFix:SetBar1Bindings()
     local db = HoldToCastFixDB
     if not db or not db.enabled or not db.bars or not db.bars[1] then return end
@@ -210,6 +251,7 @@ function HoldToCastFix:ApplyBindings()
     ClearOverrideBindings(bindingFrameOthers)
     self.bindingsActive = false
     self.bar1Paged = false
+    self.bar1Page = 1
 
     local db = HoldToCastFixDB
     if not db or not db.enabled then
@@ -219,9 +261,11 @@ function HoldToCastFix:ApplyBindings()
         return
     end
 
+    -- Always teardown/rebuild state driver to pick up fresh conditions
+    self:DisableStateDriver()
     self:SetBindings()
     self:EnableStateDriver()
-    DebugLog("ApplyBindings: done, active=" .. tostring(self.bindingsActive) .. " paged=" .. tostring(self.bar1Paged))
+    DebugLog("ApplyBindings: done, active=" .. tostring(self.bindingsActive) .. " page=" .. tostring(self.bar1Page))
 end
 
 function HoldToCastFix:EnableStateDriver()
@@ -229,25 +273,12 @@ function HoldToCastFix:EnableStateDriver()
     if not db or not db.enabled then return end
 
     if HasBar1Enabled() then
-        if not self.stateDriverActive then
-            self.stateDriverActive = true
-            DebugLog("EnableStateDriver: registering (first time)")
-            RegisterStateDriver(stateFrame, "htcfpage", GetPagingConditions())
-            -- RegisterStateDriver fires _onstate- immediately, which handles
-            -- the initial state. No further action needed here.
-        else
-            -- State driver already active — re-check current state so that
-            -- ApplyBindings() + EnableStateDriver() stays consistent after
-            -- the paging flags were reset in ApplyBindings().
-            local page = tostring(stateFrame:GetAttribute("state-htcfpage") or "")
-            DebugLog("EnableStateDriver: already active, page=" .. page)
-            if page ~= "1" then
-                self.bar1Paged = true
-                ClearOverrideBindings(bindingFrameBar1)
-                self.bindingsActive = HasAnyNonBar1Enabled()
-            end
-            if ns.UpdateActiveState then ns.UpdateActiveState() end
-        end
+        self.stateDriverActive = true
+        local conds = GetPagingConditions()
+        DebugLog("EnableStateDriver: registering")
+        RegisterStateDriver(stateFrame, "htcfpage", conds)
+        -- RegisterStateDriver fires _onstate- immediately, which handles
+        -- the initial state.
     else
         self:DisableStateDriver()
     end
@@ -258,6 +289,20 @@ function HoldToCastFix:DisableStateDriver()
         UnregisterStateDriver(stateFrame, "htcfpage")
         self.stateDriverActive = false
     end
+end
+
+-- Re-register form paging events on Blizzard's ActionBarController.
+-- ElvUI disables ActionBarController events to prevent it from interfering,
+-- but without these events the engine-side action bar page never updates for
+-- Druid forms (etc.), making ACTIONBUTTON bindings fire the wrong slot.
+-- Re-registering only the form-related events lets the engine page correctly
+-- while ElvUI still handles all visual bar display via its own state drivers.
+local function EnableBlizzardFormPaging()
+    local controller = _G.ActionBarController
+    if not controller then return end
+    controller:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
+    controller:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+    DebugLog("EnableBlizzardFormPaging: registered events on ActionBarController")
 end
 
 function HoldToCastFix:Initialize()
@@ -297,6 +342,10 @@ function HoldToCastFix:Initialize()
             end
         end
     end
+
+    -- Let Blizzard's ActionBarController handle engine-side form paging
+    -- so ACTIONBUTTON bindings fire the correct paged action slot
+    EnableBlizzardFormPaging()
 
     if ns.InitMinimapButton then
         ns.InitMinimapButton()
