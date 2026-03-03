@@ -1,5 +1,10 @@
 # ElvUI HoldToCastFix
 
+## [v1.5.1](https://github.com/danielbehrens/ElvUI-HoldToCastFix/tree/v1.5.1) (2026-03-03)
+[Full Changelog](https://github.com/danielbehrens/ElvUI-HoldToCastFix/commits/v1.5.1) [Previous Releases](https://github.com/danielbehrens/ElvUI-HoldToCastFix/releases)
+
+- fix: hold-to-cast no longer breaks after dungeon scene transition (e.g. Den of Nalorakk)
+
 ## [v1.5.0](https://github.com/danielbehrens/ElvUI-HoldToCastFix/tree/v1.5.0) (2026-02-17)
 [Full Changelog](https://github.com/danielbehrens/ElvUI-HoldToCastFix/commits/v1.5.0) [Previous Releases](https://github.com/danielbehrens/ElvUI-HoldToCastFix/releases)
 

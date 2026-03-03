@@ -353,6 +353,8 @@ function HoldToCastFix:Initialize()
 
     self:ApplyBindings()
     self:RegisterEvent("PLAYER_REGEN_ENABLED")
+    self:RegisterEvent("PLAYER_ENTERING_WORLD")
+    self.initialized = true
 end
 
 HoldToCastFix:RegisterEvent("PLAYER_LOGIN")
@@ -361,6 +363,12 @@ HoldToCastFix:SetScript("OnEvent", function(self, event)
         self:UnregisterEvent("PLAYER_LOGIN")
         self:Initialize()
         DebugLog("PLAYER_LOGIN: initialized")
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        if self.initialized then
+            DebugLog("PLAYER_ENTERING_WORLD: re-applying bindings")
+            EnableBlizzardFormPaging()
+            self:ApplyBindings()
+        end
     elseif event == "PLAYER_REGEN_ENABLED" then
         DebugLog("REGEN_ENABLED: pending=" .. tostring(self.pendingUpdate))
         if self.pendingUpdate then
