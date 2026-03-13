@@ -55,6 +55,7 @@ HoldToCastFix.bindingsActive = false
 HoldToCastFix.stateDriverActive = false
 HoldToCastFix.bar1Paged = false
 HoldToCastFix.bar1Page = 1
+HoldToCastFix.zoneTimer = nil
 
 -- Debug event log (ring buffer, newest at end)
 local DEBUG_LOG_MAX = 40
@@ -291,18 +292,50 @@ function HoldToCastFix:DisableStateDriver()
     end
 end
 
--- Re-register form paging events on Blizzard's ActionBarController.
+-- Re-register action bar events on Blizzard's ActionBarController.
 -- ElvUI disables ActionBarController events to prevent it from interfering,
 -- but without these events the engine-side action bar page never updates for
--- Druid forms (etc.), making ACTIONBUTTON bindings fire the wrong slot.
--- Re-registering only the form-related events lets the engine page correctly
+-- Druid forms, override bar transitions (Skyriding dismount), etc., making
+-- ACTIONBUTTON bindings fire the wrong slot.
+-- Re-registering only the needed events lets the engine page correctly
 -- while ElvUI still handles all visual bar display via its own state drivers.
-local function EnableBlizzardFormPaging()
+local function EnableBlizzardBarEvents()
     local controller = _G.ActionBarController
     if not controller then return end
     controller:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
     controller:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
-    DebugLog("EnableBlizzardFormPaging: registered events on ActionBarController")
+    controller:RegisterEvent("UPDATE_OVERRIDE_ACTIONBAR")
+    DebugLog("EnableBlizzardBarEvents: registered events on ActionBarController")
+end
+
+-- Force the engine's internal action bar page to match the current state.
+-- During zone transitions (e.g. entering a dungeon while Skyriding), the
+-- bonus/override bar events may fire during the loading screen when
+-- ActionBarController can't process them properly, leaving the engine page
+-- stuck on the old bar (Skyriding abilities). This explicitly recalculates
+-- and sets the correct page.
+local function ForceUpdateEngineBarPage()
+    -- Try the Blizzard helper (calls ChangeActionBarPage internally)
+    if ActionBarController_UpdateAll then
+        ActionBarController_UpdateAll(true)
+        DebugLog("ForceUpdateEngineBarPage: ActionBarController_UpdateAll")
+        return
+    end
+    -- Fallback: calculate the correct page and set it directly
+    local page = 1
+    if HasOverrideActionBar and HasOverrideActionBar() then
+        page = GetOverrideBarIndex()
+    elseif HasVehicleActionBar and HasVehicleActionBar() then
+        page = GetVehicleBarIndex()
+    elseif HasBonusActionBar and HasBonusActionBar() then
+        page = GetBonusBarOffset() + (NUM_ACTIONBAR_PAGES or 6)
+    elseif HasTempShapeshiftActionBar and HasTempShapeshiftActionBar() then
+        page = GetTempShapeshiftBarIndex()
+    end
+    if ChangeActionBarPage then
+        ChangeActionBarPage(page)
+    end
+    DebugLog("ForceUpdateEngineBarPage: page=" .. tostring(page))
 end
 
 function HoldToCastFix:Initialize()
@@ -343,9 +376,9 @@ function HoldToCastFix:Initialize()
         end
     end
 
-    -- Let Blizzard's ActionBarController handle engine-side form paging
+    -- Let Blizzard's ActionBarController handle engine-side bar paging
     -- so ACTIONBUTTON bindings fire the correct paged action slot
-    EnableBlizzardFormPaging()
+    EnableBlizzardBarEvents()
 
     if ns.InitMinimapButton then
         ns.InitMinimapButton()
@@ -366,8 +399,21 @@ HoldToCastFix:SetScript("OnEvent", function(self, event)
     elseif event == "PLAYER_ENTERING_WORLD" then
         if self.initialized then
             DebugLog("PLAYER_ENTERING_WORLD: re-applying bindings")
-            EnableBlizzardFormPaging()
+            EnableBlizzardBarEvents()
             self:ApplyBindings()
+            ForceUpdateEngineBarPage()
+            -- Safety-net: re-apply after a short delay to handle late
+            -- bar transitions (e.g. Skyriding dismount during loading
+            -- screen where engine page update events may be lost).
+            if self.zoneTimer then self.zoneTimer:Cancel() end
+            self.zoneTimer = C_Timer.NewTimer(1, function()
+                self.zoneTimer = nil
+                if not self.initialized then return end
+                DebugLog("ZoneTimer: delayed re-apply")
+                EnableBlizzardBarEvents()
+                self:ApplyBindings()
+                ForceUpdateEngineBarPage()
+            end)
         end
     elseif event == "PLAYER_REGEN_ENABLED" then
         DebugLog("REGEN_ENABLED: pending=" .. tostring(self.pendingUpdate))

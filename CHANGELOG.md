@@ -1,5 +1,12 @@
 # ElvUI HoldToCastFix
 
+## [v1.5.2](https://github.com/danielbehrens/ElvUI-HoldToCastFix/tree/v1.5.2) (2026-03-13)
+[Full Changelog](https://github.com/danielbehrens/ElvUI-HoldToCastFix/commits/v1.5.2) [Previous Releases](https://github.com/danielbehrens/ElvUI-HoldToCastFix/releases)
+
+- fix: keybindings no longer break after entering a dungeon while flying
+  The action bar page could get stuck on the Skyriding bar when zoning into a dungeon mid-flight, causing keybinds to stop working until a /reload. This is now fixed by ensuring the action bar page is properly reset after zone transitions.
+  Thanks to **legionbcm** for the detailed bug report and steps to reproduce!
+
 ## [v1.5.1](https://github.com/danielbehrens/ElvUI-HoldToCastFix/tree/v1.5.1) (2026-03-03)
 [Full Changelog](https://github.com/danielbehrens/ElvUI-HoldToCastFix/commits/v1.5.1) [Previous Releases](https://github.com/danielbehrens/ElvUI-HoldToCastFix/releases)
 
