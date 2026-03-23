@@ -77,7 +77,9 @@ local function CreateMinimapButton()
         GameTooltip:AddLine("ElvUI HoldToCastFix")
         local htcf = ns.HoldToCastFix
         local active = htcf and htcf.bindingsActive
-        if active then
+        if htcf and htcf.housingMode then
+            GameTooltip:AddLine("Status: Paused (housing plot)", 1, 0.7, 0)
+        elseif active then
             GameTooltip:AddLine("Status: Active", 0, 1, 0)
             GameTooltip:AddLine("Bars: " .. GetEnabledBarString(), 0.8, 0.8, 0.8)
             if htcf.bar1Paged then
@@ -192,6 +194,8 @@ function ns.UpdateActiveState()
 
         if db and not db.enabled then
             statusIndicator:SetText("|cffff0000Disabled|r")
+        elseif htcf and htcf.housingMode then
+            statusIndicator:SetText("|cffffaa00Paused|r (housing plot)")
         elseif active then
             if bar1Page > 1 then
                 statusIndicator:SetText("|cff00ff00Active|r - Bars " .. barStr .. "\n|cff00ccff(bar 1: page " .. bar1Page .. ")|r")
@@ -400,6 +404,7 @@ local function BuildDebugLines(plain)
     L("bindingsActive:    " .. S(htcf.bindingsActive))
     L("bar1Paged:         " .. S(htcf.bar1Paged))
     L("bar1Page:          " .. S(htcf.bar1Page))
+    L("housingMode:       " .. S(htcf.housingMode))
     L("pendingUpdate:     " .. S(htcf.pendingUpdate))
     L("stateDriverActive: " .. S(htcf.stateDriverActive))
     L("InCombatLockdown:  " .. S(InCombatLockdown()))

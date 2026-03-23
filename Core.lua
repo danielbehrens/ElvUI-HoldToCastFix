@@ -55,6 +55,7 @@ HoldToCastFix.bindingsActive = false
 HoldToCastFix.stateDriverActive = false
 HoldToCastFix.bar1Paged = false
 HoldToCastFix.bar1Page = 1
+HoldToCastFix.housingMode = false
 HoldToCastFix.zoneTimer = nil
 
 -- Debug event log (ring buffer, newest at end)
@@ -262,6 +263,17 @@ function HoldToCastFix:ApplyBindings()
         return
     end
 
+    -- Housing plot: disable completely — players are pacified and the
+    -- housing editor needs keybinds (1-4) that our overrides would eat.
+    if C_Housing and C_Housing.IsInsidePlot and C_Housing.IsInsidePlot() then
+        self.housingMode = true
+        self:DisableStateDriver()
+        DebugLog("ApplyBindings: housing plot, bindings disabled")
+        if ns.UpdateActiveState then ns.UpdateActiveState() end
+        return
+    end
+    self.housingMode = false
+
     -- Always teardown/rebuild state driver to pick up fresh conditions
     self:DisableStateDriver()
     self:SetBindings()
@@ -361,6 +373,14 @@ function HoldToCastFix:Initialize()
     self:ApplyBindings()
     self:RegisterEvent("PLAYER_REGEN_ENABLED")
     self:RegisterEvent("PLAYER_ENTERING_WORLD")
+
+    -- Housing plot detection: disable bindings while on a housing plot
+    -- so the housing editor's keybinds (1-4) work correctly.
+    if C_Housing then
+        self:RegisterEvent("HOUSE_PLOT_ENTERED")
+        self:RegisterEvent("HOUSE_PLOT_EXITED")
+    end
+
     self.initialized = true
 end
 
@@ -387,6 +407,12 @@ HoldToCastFix:SetScript("OnEvent", function(self, event)
                 self:ApplyBindings()
             end)
         end
+    elseif event == "HOUSE_PLOT_ENTERED" then
+        DebugLog("HOUSE_PLOT_ENTERED: disabling bindings")
+        self:ApplyBindings()
+    elseif event == "HOUSE_PLOT_EXITED" then
+        DebugLog("HOUSE_PLOT_EXITED: restoring bindings")
+        self:ApplyBindings()
     elseif event == "PLAYER_REGEN_ENABLED" then
         DebugLog("REGEN_ENABLED: pending=" .. tostring(self.pendingUpdate))
         if self.pendingUpdate then
