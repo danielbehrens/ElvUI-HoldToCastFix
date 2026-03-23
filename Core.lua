@@ -87,11 +87,37 @@ local function HasAnyNonBar1Enabled()
     return false
 end
 
+-- Transform modifier-only paging conditions to use negative page numbers.
+-- This lets the secure handler distinguish modifier-based page changes
+-- (which the engine doesn't track) from engine-side page changes
+-- (bonus bar, shapeshift, bar switching) where ACTIONBUTTON fires correctly.
+--
+-- Example: "[mod:shift]4" becomes "[mod:shift] -4"
+-- But "[bonusbar:1,stealth]13" stays unchanged.
+local function NegateModifierPages(paging)
+    return paging:gsub("(%[([^%]]-)%])%s*(%d+)", function(bracket, inner, pageStr)
+        -- Only negate if the condition contains a modifier qualifier
+        -- AND does not contain engine-side conditions (bonusbar, bar, shapeshift)
+        if inner:find("mod:")
+           and not inner:find("bonusbar")
+           and not inner:find("bar:")
+           and not inner:find("shapeshift")
+           and not inner:find("overridebar")
+           and not inner:find("vehicleui")
+           and not inner:find("possessbar") then
+            return bracket .. " -" .. pageStr
+        end
+    end)
+end
+
 -- Build paging condition string for bar1 state driver.
 -- Returns actual page numbers matching ElvUI's bar1 paging.
 -- Vehicle/override/possess return 0 (bindings cleared, let ElvUI handle).
--- Form paging returns actual page numbers for tracking; the engine-side page
--- is updated by ActionBarController (we re-register its bar events).
+-- Modifier-only paging returns NEGATIVE page numbers (bindings cleared,
+-- let ElvUI handle — ACTIONBUTTON can't fire the correct paged slot
+-- because the engine's internal page doesn't change for modifier paging).
+-- Form paging returns positive page numbers for tracking; the engine-side
+-- page is updated by ActionBarController so ACTIONBUTTON bindings fire correctly.
 local function GetPagingConditions()
     local conditions = ""
 
@@ -105,6 +131,7 @@ local function GetPagingConditions()
 
     -- Class-specific paging from ElvUI config (produces actual page numbers)
     -- e.g. Druid: "[bonusbar:1,nostealth] 7; [bonusbar:1,stealth] 8; ..."
+    -- Modifier-only conditions get negated so the state handler can clear bindings.
     if ElvUI then
         local E = ElvUI[1]
         if E and E.db and E.db.actionbar and E.db.actionbar.bar1
@@ -112,6 +139,7 @@ local function GetPagingConditions()
             local classPaging = E.db.actionbar.bar1.paging[E.myclass]
             if classPaging and classPaging ~= "" then
                 classPaging = classPaging:gsub("[\n\r]", "")
+                classPaging = NegateModifierPages(classPaging)
                 conditions = conditions .. classPaging .. " "
             end
         end
@@ -136,14 +164,16 @@ local function GetPagingConditions()
 end
 
 -- Secure handler: manages bar1 paging.
--- For vehicle/override (page == 0), clears bindings and lets ElvUI handle.
+-- For vehicle/override (page == 0) and modifier-paged (page < 0), clears
+-- bindings and lets ElvUI handle.
 -- For form paging (page >= 1), bindings stay active — the engine-side page
 -- is updated by ActionBarController so ACTIONBUTTON bindings fire correctly.
 stateFrame:SetAttribute("_onstate-htcfpage", [[
     local page = tonumber(newstate)
 
-    if not page or page == 0 then
-        -- Vehicle/override/possess: clear bindings, let ElvUI handle
+    if not page or page <= 0 then
+        -- Vehicle/override/possess (0) or modifier-paged (negative):
+        -- clear bindings, let ElvUI handle
         local bf = self:GetFrameRef("bindingFrame")
         if bf then
             bf:ClearBindings()
@@ -155,30 +185,38 @@ stateFrame:SetAttribute("_onstate-htcfpage", [[
 
 -- Lua callback: handles bar1 paging state changes.
 -- page == 0: vehicle/override — bindings cleared by secure handler
+-- page < 0:  modifier-paged — bindings cleared by secure handler
+--            (ACTIONBUTTON can't fire correct paged slot; the engine's
+--            internal page doesn't change for modifier-based paging)
 -- page >= 1: normal or form — bindings stay active, engine handles paging
 function stateFrame:OnSecureStateChanged()
     local page = tonumber(self:GetAttribute("state-htcfpage")) or 0
     DebugLog("StateChanged: page=" .. tostring(page) .. " combat=" .. tostring(InCombatLockdown()))
 
-    HoldToCastFix.bar1Page = page
+    HoldToCastFix.bar1Page = math.abs(page)
 
-    if page == 0 then
-        -- Vehicle/override/possess: bindings cleared by secure handler
+    if page <= 0 then
+        -- Vehicle/override/possess (0) or modifier-paged (negative):
+        -- bindings cleared by secure handler, let ElvUI handle
         HoldToCastFix.bar1Paged = true
         HoldToCastFix.bindingsActive = HasAnyNonBar1Enabled()
-        DebugLog("  -> bar1Paged=true (vehicle/override), active=" .. tostring(HoldToCastFix.bindingsActive))
+        if page == 0 then
+            DebugLog("  -> bar1Paged=true (vehicle/override), active=" .. tostring(HoldToCastFix.bindingsActive))
+        else
+            DebugLog("  -> bar1Paged=true (modifier page " .. math.abs(page) .. "), hold-to-cast paused")
+        end
     else
         if HoldToCastFix.bar1Paged then
-            -- Returning from vehicle/override — need to restore bar1 bindings
+            -- Returning from vehicle/override/modifier paging — restore bar1 bindings
             HoldToCastFix.bar1Paged = false
             if InCombatLockdown() then
                 HoldToCastFix.pendingUpdate = true
                 HoldToCastFix.bindingsActive = HasAnyNonBar1Enabled()
-                DebugLog("  -> returning from vehicle, DEFERRED (combat), page=" .. page)
+                DebugLog("  -> returning from paged, DEFERRED (combat), page=" .. page)
             else
                 ClearOverrideBindings(bindingFrameBar1)
                 HoldToCastFix:SetBar1Bindings()
-                DebugLog("  -> returning from vehicle, bindings restored, page=" .. page)
+                DebugLog("  -> returning from paged, bindings restored, page=" .. page)
             end
         else
             -- Normal form switch: bindings stay active, engine pages ACTIONBUTTON

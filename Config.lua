@@ -83,7 +83,12 @@ local function CreateMinimapButton()
             GameTooltip:AddLine("Status: Active", 0, 1, 0)
             GameTooltip:AddLine("Bars: " .. GetEnabledBarString(), 0.8, 0.8, 0.8)
             if htcf.bar1Paged then
-                GameTooltip:AddLine("(Bar 1 paged)", 1, 0.7, 0)
+                local pg = htcf.bar1Page or 0
+                if pg > 1 then
+                    GameTooltip:AddLine("(Bar 1 modifier-paged to " .. pg .. ")", 1, 0.7, 0)
+                else
+                    GameTooltip:AddLine("(Bar 1 paged - vehicle/override)", 1, 0.7, 0)
+                end
             end
         else
             GameTooltip:AddLine("Status: Inactive", 1, 0.4, 0)
@@ -205,7 +210,11 @@ function ns.UpdateActiveState()
         elseif pendingUpdate then
             statusIndicator:SetText("|cffffaa00Pending|r - restoring after combat")
         elseif bar1Paged then
-            statusIndicator:SetText("|cffffaa00Inactive|r (vehicle/override)")
+            if bar1Page > 1 then
+                statusIndicator:SetText("|cffffaa00Paused|r (bar 1 modifier-paged to " .. bar1Page .. ")")
+            else
+                statusIndicator:SetText("|cffffaa00Inactive|r (vehicle/override)")
+            end
         else
             statusIndicator:SetText("|cffffaa00Inactive|r")
         end
