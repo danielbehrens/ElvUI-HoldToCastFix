@@ -1,4 +1,4 @@
-## Interface: 120000, 120001
+## Interface: 120005
 ## Title: ElvUI HoldToCastFix
 ## Notes: Fixes Press and Hold Casting for ElvUI action bar buttons by routing keybinds to Blizzard's native ActionButton frames.
 ## Author: HoldToCastFix
